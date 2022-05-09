@@ -1,0 +1,32 @@
+#!/usr/bin/env ruby
+
+
+#function extract_gem_versions() {
+  #echo "$1" \
+    #| grep -o '\((.*)\)$' \
+    #| tr -d '() ' \
+    #| tr ',' "\n";
+#}
+
+#function gem_versions() {
+  #local gem_name="$1";
+  #local pattern="^${gem_name}$";
+  #local vers_str="$(gem search ${pattern} --all)";
+  #extract_gem_versions "$vers_str";
+#}
+
+#gem_versions "$1" | sed '/-/!{s/$/_/}' | sort -V | sed 's/_$//'
+
+gem_name = ARGV.first
+raise ArgumentError unless gem_name
+
+version_string = %x[gem search "^#{gem_name}$" --all].gsub(/\(|\)/, '')
+
+versions =
+  version_string.
+  gsub(/\(|\)/, '').
+  split.
+  select { |str| str =~ /(\d+\.\d+\.\d+\.\d+|\d+\.\d+\.\d+)/ }.
+  map { |str| str.gsub(/,/, '') }
+
+puts versions.sort_by { |v| Gem::Version.new(v) }

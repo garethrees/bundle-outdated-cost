@@ -1,0 +1,174 @@
+#!/usr/bin/env ruby
+
+require 'json'
+
+# Usage: bundle outdated | bundle-outdated-cost
+class SemVer
+  def initialize(version_string)
+    @version_string = version_string
+  end
+
+  def >=(other)
+    return true if components == other.components
+    self > other || false
+  end
+
+  def >(other)
+    return true if major > other.major
+    return false if other.major > major
+    return true if minor > other.minor
+    return false if other.minor > minor
+    return true if patch > other.patch
+    return false if other.patch > patch
+    return true if tweak > other.tweak
+    return false if tweak > other.tweak
+    false
+  end
+
+  def to_s
+    version_string
+  end
+
+  def major
+    components[0]
+  end
+
+  def minor
+    components[1]
+  end
+
+  def patch
+    components[2]
+  end
+
+  def tweak
+    components[3] || 0
+  end
+
+  protected
+
+  attr_reader :version_string
+
+  def components
+    version_string.split('.').map { |i| Integer(i) }
+  end
+end
+
+# Assumes installed < latest
+class UpgradeCost
+  def initialize(installed, latest)
+    @installed, @latest = installed, latest
+  end
+
+  def total
+    major + minor + patch + tweak
+  end
+
+  def major
+    cost(:major) * 7.5 # Day
+  end
+
+  def minor
+    cost(:minor) * 2.5 # Half Day
+  end
+
+  def patch
+    cost(:patch) * 1 # Hour
+  end
+
+  def tweak
+    cost(:tweak) * 1 # Hour
+  end
+
+  protected
+
+  attr_reader :installed, :latest
+
+  private
+
+  def cost(value)
+    calc = latest.send(value) - installed.send(value)
+    calc.negative? ? 0 : calc
+  end
+end
+
+class AllGemVersions
+  def initialize(gem_name)
+    @gem_name = gem_name
+  end
+
+  def to_a
+    version_string = %x[gem search "^#{gem_name}$" --all].gsub(/\(|\)/, '')
+
+    versions =
+      version_string.
+      gsub(/\(|\)/, '').
+      split.
+      select { |str| str =~ /(\d+\.\d+\.\d+\.\d+|\d+\.\d+\.\d+)/ }.
+      map { |str| str.gsub(/,/, '') }
+
+    versions.sort_by { |v| Gem::Version.new(v) }
+  end
+
+  protected
+
+  attr_reader :gem_name
+end
+
+def versions_to_upgrade(gem_name, outdated)
+  installed = SemVer.new(outdated[:installed])
+  all_versions = AllGemVersions.new(gem_name).to_a.map { |str| SemVer.new(str) }
+
+  diff_versions = all_versions.select do |version|
+    version >= installed
+  end
+end
+
+BUNDLE_OUTDATED_PATTERN = /\s\s\*\s(?<gem_name>(\w+|-)+).*newest\s(?<newest>\d+\.\d+\.\d+).*installed\s(?<installed>\d+\.\d+\.\d+).*/
+
+outdated_gems = {}
+
+STDIN.each_line do |line|
+  next unless line.start_with?('  * ')
+  match = line.match(BUNDLE_OUTDATED_PATTERN)
+
+  outdated_gems[match[:gem_name]] = {
+    newest: match[:newest], installed: match[:installed]
+  }
+end
+
+output = {}
+
+outdated_gems.each do |gem_name, outdated|
+  versions = versions_to_upgrade(gem_name, outdated)
+
+  costs = versions.each_slice(2).map do |a,b|
+    next if a.nil? || b.nil?
+    UpgradeCost.new(a,b)
+  end
+
+  base_cost = costs.compact.map(&:total).sum
+  age_cost = base_cost + (base_cost * (versions.size * 0.1)).round
+
+  output[gem_name] = {
+    count: versions.size,
+    base_cost: base_cost,
+    age_cost: age_cost,
+    diff: versions.join(", ")
+  }
+end
+
+base_cost = output.sum { |_, data| data[:base_cost] || 0 }
+age_cost = output.sum { |_, data| data[:age_cost] || 0 }
+
+output = {
+  overall: {
+    base_cost_hours: base_cost,
+    base_cost_days: (base_cost / 7.5).round,
+    age_cost_hours: age_cost,
+    age_cost_days: (age_cost / 7.5).round,
+  },
+  details: output
+}
+
+puts output.to_json

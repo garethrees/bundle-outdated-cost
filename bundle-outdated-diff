@@ -1,0 +1,18 @@
+#!/usr/bin/env ruby
+
+require 'json'
+
+REGEXP = /\s\s\*\s(?<gem_name>(\w+|-)+).*newest\s(?<newest>\d+\.\d+\.\d+).*installed\s(?<installed>\d+\.\d+\.\d+).*/
+
+hash = {}
+
+STDIN.each_line do |line|
+  next unless line.start_with?('  * ')
+  match = line.match(REGEXP)
+
+  hash[match[:gem_name]] = {
+    newest: match[:newest], installed: match[:installed]
+  }
+end
+
+puts hash.to_json
